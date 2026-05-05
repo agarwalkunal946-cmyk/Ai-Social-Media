@@ -1,0 +1,10 @@
+.env
+*.log
+*.err
+*.out
+app/static/reports/*
+uploads/avatars/*
+uploads/x-archives/*
+!app/static/reports/.gitkeep
+!uploads/avatars/.gitkeep
+!uploads/x-archives/.gitkeep
