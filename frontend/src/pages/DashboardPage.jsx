@@ -41,6 +41,21 @@ const platformColors = {
   x: "from-slate-200 to-slate-500",
 };
 
+const moduleCardIcons = {
+  "Real-time analytics": Activity,
+  "Multi-platform view": Users,
+  "Sentiment and emotion": MessageSquareText,
+  "Toxicity detection": ShieldAlert,
+  "Audience insights": Users,
+  "Predictive analysis": TrendingUp,
+  "Recommendation system": Sparkles,
+  "Explainable AI": BrainCircuit,
+  "Trending hashtags": Hash,
+  "Crisis alerts": TriangleAlert,
+  "Chatbot assistant": Bot,
+  "Automated reports": FileText,
+};
+
 const CustomTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null;
   return (
@@ -228,80 +243,69 @@ export function DashboardPage() {
   const forecastDirection = data?.predictive_analysis?.trend_direction || "Stable";
   const predictedChange = data?.predictive_analysis?.predicted_change_pct ?? 0;
 
-  const moduleCards = [
+  const fallbackModuleCards = [
     {
       title: "Real-time analytics",
       value: interactionValue,
       detail: "Current interactions across indexed posts, videos, reels, and public conversations.",
-      icon: Activity,
     },
     {
       title: "Multi-platform view",
       value: `${connectedAccountsValue}/3`,
       detail: "Instagram, YouTube, and X / Twitter are merged into one workspace.",
-      icon: Users,
     },
     {
       title: "Sentiment and emotion",
       value: `${dominantMood}`,
       detail: `Primary detected emotion: ${topEmotion}.`,
-      icon: MessageSquareText,
     },
     {
       title: "Toxicity detection",
       value: toxicityValue,
       detail: "Flagged moderation risk across the current indexed content sample.",
-      icon: ShieldAlert,
     },
     {
       title: "Audience insights",
       value: audienceLeader?.platform || "n/a",
       detail: audienceLeader ? `${audienceLeader.platform} currently leads visible audience reach.` : "Connect a platform to compare audience reach.",
-      icon: Users,
     },
     {
       title: "Predictive analysis",
       value: forecastDirection,
       detail: `Predicted engagement shift: ${predictedChange >= 0 ? "+" : ""}${predictedChange.toFixed(1)}%.`,
-      icon: TrendingUp,
     },
     {
       title: "Recommendation system",
       value: `${data?.recommendations?.length || 0}`,
       detail: "Suggestions for timing, caption angles, hashtag mix, and trend response.",
-      icon: Sparkles,
     },
     {
       title: "Explainable AI",
       value: `${explainabilityFactors.length}`,
       detail: "Transparent factors behind the platform, forecast, and risk outputs.",
-      icon: BrainCircuit,
     },
     {
       title: "Trending hashtags",
       value: `${trendingHashtags.length}`,
       detail: "Recurring hashtag signals pulled from current high-performing content.",
-      icon: Hash,
     },
     {
       title: "Crisis alerts",
       value: `${crisisAlerts.length}`,
       detail: crisisAlerts.length ? "Negative spikes or moderation issues currently need attention." : "No active crisis alert is dominating the workspace right now.",
-      icon: TriangleAlert,
     },
     {
       title: "Chatbot assistant",
       value: `${data?.chatbot?.starter_questions?.length || 0}`,
       detail: "Interactive assistant for timing, audience, hashtag, and risk questions.",
-      icon: Bot,
     },
     {
       title: "Automated reports",
       value: `${reports.length}`,
       detail: reports.length ? "Recent report snapshots are ready to open and share." : "Generate weekly or monthly reports from the reports workspace.",
-      icon: FileText,
     },
   ];
+  const moduleCards = data?.module_highlights?.length ? data.module_highlights : fallbackModuleCards;
 
   const sendMessage = async (message) => {
     const trimmed = (message || "").trim();
@@ -354,7 +358,7 @@ export function DashboardPage() {
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {dashboardQuery.isLoading
             ? Array.from({ length: 12 }).map((_, index) => <PanelSkeleton key={`module-skeleton-${index}`} rows={2} />)
-            : moduleCards.map((card) => <ModuleCard key={card.title} {...card} />)}
+            : moduleCards.map((card) => <ModuleCard key={card.title} {...card} icon={moduleCardIcons[card.title] || Sparkles} />)}
         </div>
       </section>
 
@@ -646,6 +650,11 @@ export function DashboardPage() {
                 <p className="mt-2 text-xs leading-relaxed text-slate-400">{item.body}</p>
               </div>
             ))}
+            {!(data?.recommendations || []).length && !crisisAlerts.length && (
+              <div className="rounded-xl bg-white/[0.03] p-4 text-sm text-slate-400">
+                AI recommendations and crisis alerts will appear after connected content is indexed and analyzed.
+              </div>
+            )}
             {!!crisisAlerts.length && (
               <div className="rounded-2xl border border-rose-500/10 bg-rose-500/[0.03] p-4">
                 <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-rose-300">Crisis alerts</p>

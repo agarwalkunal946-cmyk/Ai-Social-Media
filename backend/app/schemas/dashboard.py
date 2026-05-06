@@ -26,6 +26,7 @@ class DashboardPayload(BaseModel):
     predictive_analysis: dict[str, Any] = Field(default_factory=dict)
     explainable_ai: dict[str, Any] = Field(default_factory=dict)
     trending_hashtags: list[dict[str, Any]] = Field(default_factory=list)
+    module_highlights: list[dict[str, Any]] = Field(default_factory=list)
     chatbot: dict[str, Any] = Field(default_factory=dict)
     moderation_queue: list[dict[str, Any]] = Field(default_factory=list)
     crisis_alerts: list[dict[str, Any]] = Field(default_factory=list)

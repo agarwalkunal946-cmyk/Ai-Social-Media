@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from app.core.config import get_settings
 from app.db.mongo import get_database
 from app.services.alerts import sync_workspace_alerts
-from app.services.dashboard_data import build_dashboard_snapshot, invalidate_dashboard_snapshot_cache
+from app.services.dashboard_data import build_dashboard_snapshot, build_module_highlights, invalidate_dashboard_snapshot_cache
 
 
 def _safe_text(value, fallback: str = "n/a") -> str:
@@ -177,76 +177,9 @@ def _build_report_data(snapshot: dict, alerts: list[dict], connections: list[dic
     top_content = snapshot.get("top_content") or []
     recommendations = snapshot.get("recommendations") or []
     hashtags = snapshot.get("trending_hashtags") or []
-    explainable_ai = snapshot.get("explainable_ai") or {}
-    chatbot = snapshot.get("chatbot") or {}
-    predictive_analysis = snapshot.get("predictive_analysis") or {}
-    high_severity_count = sum(1 for alert in alerts if str(alert.get("severity")).lower() == "high")
     audience_leader = max(comparison, key=lambda item: item.get("reach", 0), default=None)
     peak_day = max(trend, key=lambda item: item.get("value", 0), default=None)
-    toxicity_value = (snapshot.get("toxicity_summary") or {}).get("label") or "n/a"
-
-    coverage = [
-        {
-            "title": "Real-time analytics",
-            "value": next((item.get("value") for item in overview if item.get("label") == "Interactions"), "0"),
-            "detail": "Current interaction totals from the indexed content set.",
-        },
-        {
-            "title": "Multi-platform view",
-            "value": f"{len(connections)}/3",
-            "detail": "Instagram, YouTube, and X are combined in one report view.",
-        },
-        {
-            "title": "Sentiment and emotion",
-            "value": next((item.get("value") for item in overview if item.get("label") == "Overall Mood"), "n/a"),
-            "detail": "Audience tone inferred from captions, posts, and conversation text.",
-        },
-        {
-            "title": "Toxicity detection",
-            "value": toxicity_value,
-            "detail": "Moderation risk stays visible when harmful-language signals are present.",
-        },
-        {
-            "title": "Audience insights",
-            "value": audience_leader.get("platform", "n/a") if audience_leader else "n/a",
-            "detail": "Platform with the strongest current reach footprint.",
-        },
-        {
-            "title": "Predictive analysis",
-            "value": predictive_analysis.get("trend_direction", peak_day.get("day", "n/a") if peak_day else "n/a"),
-            "detail": "Forecast direction derived from the recent engagement baseline versus the current momentum window.",
-        },
-        {
-            "title": "AI recommendations",
-            "value": str(len(recommendations)),
-            "detail": "Publishing, content, and caption suggestions included in this report.",
-        },
-        {
-            "title": "Crisis alerts",
-            "value": str(high_severity_count),
-            "detail": "High-severity negative spikes or moderation issues needing attention.",
-        },
-        {
-            "title": "Trending hashtags",
-            "value": str(len(hashtags)),
-            "detail": "Recurring hashtags extracted from the strongest indexed content signals.",
-        },
-        {
-            "title": "Explainable AI",
-            "value": str(len(explainable_ai.get("factors") or [])),
-            "detail": "Recommendations are backed by visible reach, sentiment, moderation, and content-topic factors.",
-        },
-        {
-            "title": "Chatbot assistant",
-            "value": str(len(chatbot.get("starter_questions") or [])),
-            "detail": "The dashboard assistant can answer questions about timing, hashtags, audience, and crisis risk.",
-        },
-        {
-            "title": "Automated reports",
-            "value": str(report_count),
-            "detail": "Total saved reports available for this workspace after this snapshot.",
-        },
-    ]
+    coverage = build_module_highlights(snapshot, report_count=report_count)
 
     summary_points = [
         f"{len(connections)} connected source(s) are included in this report snapshot.",

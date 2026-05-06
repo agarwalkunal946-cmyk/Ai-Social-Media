@@ -19,7 +19,7 @@ TIME_WINDOWS = (
     ("Evening", range(17, 21)),
     ("Late night", (21, 22, 23, 0, 1, 2, 3, 4)),
 )
-DASHBOARD_CACHE_PREFIX = "dashboard-snapshot:v1"
+DASHBOARD_CACHE_PREFIX = "dashboard-snapshot:v2"
 CHATBOT_DOMAIN_KEYWORDS = (
     "app",
     "application",
@@ -614,14 +614,16 @@ def _build_crisis_alerts(
 ) -> list[dict]:
     negative_pct = next((item.get("value", 0) for item in sentiment_breakdown if item.get("name") == "Negative"), 0)
     alerts = []
+    primary_platform = top_platform or "Connected source"
 
     if negative_pct >= 30:
         alerts.append(
             {
+                "platform": primary_platform,
                 "severity": "high" if negative_pct >= 45 else "medium",
                 "title": "Negative sentiment spike detected",
                 "explanation": f"Negative audience tone is currently {negative_pct}% of the indexed conversation sample.",
-                "recommended_action": f"Review the latest {top_platform} comments and post a clarifying response if needed.",
+                "recommended_action": f"Review the latest {primary_platform} comments and post a clarifying response if needed.",
             }
         )
 
@@ -630,6 +632,7 @@ def _build_crisis_alerts(
         if top_flag["toxicity"] >= 25:
             alerts.append(
                 {
+                    "platform": top_flag["platform"],
                     "severity": "high" if top_flag["toxicity"] >= 40 else "medium",
                     "title": "Toxic language needs moderation review",
                     "explanation": f'{top_flag["platform"]} content "{top_flag["title"]}" shows a toxicity risk score of {top_flag["toxicity"]}%.',
@@ -640,6 +643,7 @@ def _build_crisis_alerts(
     if forecast.get("trend_direction") == "Cooling":
         alerts.append(
             {
+                "platform": primary_platform,
                 "severity": "medium",
                 "title": "Engagement is cooling down",
                 "explanation": f'Predicted engagement is down {abs(forecast.get("predicted_change_pct", 0.0)):.1f}% compared with the earlier baseline.',
@@ -650,6 +654,7 @@ def _build_crisis_alerts(
     if forecast.get("viral_opportunity") == "High":
         alerts.append(
             {
+                "platform": primary_platform,
                 "severity": "low",
                 "title": "Viral opportunity detected",
                 "explanation": "Recent interaction momentum is climbing faster than the earlier baseline.",
@@ -657,6 +662,7 @@ def _build_crisis_alerts(
             }
         )
 
+    alerts.sort(key=lambda item: {"high": 3, "medium": 2, "low": 1}.get(str(item.get("severity") or "").lower(), 0), reverse=True)
     return alerts[:4]
 
 
@@ -778,6 +784,160 @@ def _build_chatbot_payload(best_day: str, best_time_window: str, top_platform: s
             "top_platform": top_platform,
         },
     }
+
+
+def _impact_rank(value: str | None) -> int:
+    return {"high": 3, "medium": 2, "low": 1}.get(str(value or "").lower(), 0)
+
+
+def _severity_rank(value: str | None) -> int:
+    return {"high": 3, "medium": 2, "low": 1}.get(str(value or "").lower(), 0)
+
+
+def _overview_metric_value(overview: list[dict], label: str, fallback: str = "0") -> str:
+    return str(next((item.get("value") for item in overview if item.get("label") == label), fallback))
+
+
+def build_module_highlights(snapshot: dict, *, report_count: int | None = None) -> list[dict]:
+    overview = snapshot.get("overview") or []
+    comparison = snapshot.get("platform_comparison") or []
+    emotions = snapshot.get("emotion_breakdown") or []
+    recommendations = snapshot.get("recommendations") or []
+    explainable_ai = snapshot.get("explainable_ai") or {}
+    hashtags = snapshot.get("trending_hashtags") or []
+    crisis_alerts = snapshot.get("crisis_alerts") or []
+    connected_accounts = snapshot.get("connected_accounts") or []
+    predictive_analysis = snapshot.get("predictive_analysis") or {}
+    toxicity_value = (snapshot.get("toxicity_summary") or {}).get("label") or "0%"
+
+    connected_total = len(connected_accounts) or _safe_int(_overview_metric_value(overview, "Connected Accounts", "0"))
+    audience_leader = max(comparison, key=lambda item: item.get("reach", 0), default=None)
+    top_platform = audience_leader.get("platform", "n/a") if audience_leader else "n/a"
+    top_emotion = emotions[0].get("name", "n/a") if emotions else "n/a"
+    predicted_change = float(predictive_analysis.get("predicted_change_pct", 0.0) or 0.0)
+    best_day = str(predictive_analysis.get("best_day") or "n/a")
+    best_time_window = str(predictive_analysis.get("best_time_window") or "Evening")
+    primary_recommendation = recommendations[0] if recommendations else None
+    leading_factor = max(
+        explainable_ai.get("factors") or [],
+        key=lambda item: (_impact_rank(item.get("impact")), len(str(item.get("reason") or ""))),
+        default=None,
+    )
+    top_hashtag = hashtags[0] if hashtags else None
+    top_alert = max(
+        crisis_alerts,
+        key=lambda item: (_severity_rank(item.get("severity")), len(str(item.get("explanation") or ""))),
+        default=None,
+    )
+    reports_total = report_count if report_count is not None else len(snapshot.get("report_preview") or [])
+
+    if primary_recommendation and best_day != "n/a":
+        recommendation_value = f"{best_day} {best_time_window}"
+        recommendation_detail = primary_recommendation.get("body") or "Recommendation insights are built from the indexed content sample."
+    elif primary_recommendation:
+        recommendation_value = primary_recommendation.get("title") or "Live recommendation ready"
+        recommendation_detail = primary_recommendation.get("body") or "Recommendation insights are built from the indexed content sample."
+    else:
+        recommendation_value = "Waiting for live data"
+        recommendation_detail = "Connect at least one platform so timing, caption, hashtag, and trend recommendations can be calculated from indexed content."
+
+    if leading_factor:
+        explainable_value = str(leading_factor.get("label") or "Visible signal")
+        explainable_detail = str(leading_factor.get("reason") or explainable_ai.get("summary") or "Explainability is tied to visible performance signals.")
+    else:
+        explainable_value = "Waiting for signal"
+        explainable_detail = str(
+            explainable_ai.get("summary")
+            or "Explainable AI factors will appear after live audience, content, and moderation signals are analyzed."
+        )
+
+    if top_hashtag:
+        hashtag_value = str(top_hashtag.get("tag") or "n/a")
+        hashtag_detail = f'{top_hashtag.get("count", 0)} recurring mention(s) across {", ".join(top_hashtag.get("platforms") or ["connected content"])}.'
+    else:
+        hashtag_value = "No tags yet"
+        hashtag_detail = "Trending hashtags will appear after recurring tags are detected in indexed content."
+
+    if top_alert:
+        severity = str(top_alert.get("severity") or "medium").lower()
+        crisis_value = {"high": "High risk", "medium": "Watch closely", "low": "Low alert"}.get(severity, "Active alert")
+        crisis_detail = f'{len(crisis_alerts)} alert(s) active. {top_alert.get("title")}: {top_alert.get("recommended_action")}'
+    else:
+        crisis_value = "No active risk"
+        crisis_detail = "No negative spike, moderation issue, or cooling trend is currently dominating the workspace."
+
+    if connected_total:
+        chatbot_value = f"{connected_total} live + public"
+        chatbot_detail = (
+            f"Grounded in {connected_total} connected source(s)"
+            + (f" with {top_platform} currently leading audience reach." if audience_leader else ".")
+        )
+    else:
+        chatbot_value = "Public + setup"
+        chatbot_detail = "The assistant is ready, but live dashboard answers improve after at least one platform is connected."
+
+    return [
+        {
+            "title": "Real-time analytics",
+            "value": _overview_metric_value(overview, "Interactions", "0"),
+            "detail": "Current interactions across indexed posts, videos, reels, and public conversations.",
+        },
+        {
+            "title": "Multi-platform view",
+            "value": f"{connected_total}/3",
+            "detail": "Instagram, YouTube, and X / Twitter are merged into one workspace.",
+        },
+        {
+            "title": "Sentiment and emotion",
+            "value": _overview_metric_value(overview, "Overall Mood", "n/a"),
+            "detail": f"Primary detected emotion: {top_emotion}.",
+        },
+        {
+            "title": "Toxicity detection",
+            "value": toxicity_value,
+            "detail": "Flagged moderation risk across the current indexed content sample.",
+        },
+        {
+            "title": "Audience insights",
+            "value": top_platform,
+            "detail": f"{top_platform} currently leads visible audience reach." if audience_leader else "Connect a platform to compare audience reach.",
+        },
+        {
+            "title": "Predictive analysis",
+            "value": str(predictive_analysis.get("trend_direction") or "Stable"),
+            "detail": f"Predicted engagement shift: {predicted_change:+.1f}%.",
+        },
+        {
+            "title": "Recommendation system",
+            "value": recommendation_value,
+            "detail": recommendation_detail,
+        },
+        {
+            "title": "Explainable AI",
+            "value": explainable_value,
+            "detail": explainable_detail,
+        },
+        {
+            "title": "Trending hashtags",
+            "value": hashtag_value,
+            "detail": hashtag_detail,
+        },
+        {
+            "title": "Crisis alerts",
+            "value": crisis_value,
+            "detail": crisis_detail,
+        },
+        {
+            "title": "Chatbot assistant",
+            "value": chatbot_value,
+            "detail": chatbot_detail,
+        },
+        {
+            "title": "Automated reports",
+            "value": str(reports_total),
+            "detail": "Recent report snapshots are ready to open and share." if reports_total else "Generate weekly or monthly reports from the reports workspace.",
+        },
+    ]
 
 
 async def _load_connected_preview_media(user: dict, platforms: list[str], limit: int = 3) -> list[dict]:
@@ -1453,6 +1613,7 @@ async def build_dashboard_snapshot(user: dict, *, force_refresh: bool = False) -
     db = get_database()
     connections = await db.social_accounts.find({"user_id": user_id}).to_list(length=20)
     connection_map = {item["platform"]: item for item in connections}
+    report_total = await db.reports.count_documents({"user_id": user_id})
     reports = await db.reports.find({"user_id": user_id}).sort("created_at", -1).to_list(length=3)
 
     previews: dict[str, dict] = {}
@@ -1463,6 +1624,7 @@ async def build_dashboard_snapshot(user: dict, *, force_refresh: bool = False) -
                 previews[platform] = preview
 
     if not previews:
+        empty_forecast = _build_forecast([])
         snapshot = {
             "overview": [
                 {"label": "Connected Accounts", "value": "0", "delta": "Connect a source to start live analytics.", "tone": "neutral"},
@@ -1475,14 +1637,18 @@ async def build_dashboard_snapshot(user: dict, *, force_refresh: bool = False) -
             "platform_comparison": [],
             "engagement_trend": [],
             "top_content": [],
-            "recommendations": _build_recommendations([], None, "n/a", "Evening", "Neutral", _build_forecast([])),
+            "recommendations": [],
             "alerts_preview": [],
             "report_preview": [],
             "platform_rollups": [],
             "toxicity_summary": {"label": "0%", "ratio": 0.0, "flagged_items": []},
             "audience_insights": {"cards": [], "notes": []},
-            "predictive_analysis": _build_forecast([]),
-            "explainable_ai": _build_explainability([], [], [], _build_forecast([]), []),
+            "predictive_analysis": empty_forecast,
+            "explainable_ai": {
+                "summary": "Connect at least one social source to generate explainable AI factors, recommendations, and risk logic from live content.",
+                "factors": [],
+                "model_stack": get_model_stack(),
+            },
             "trending_hashtags": [],
             "chatbot": _build_chatbot_payload("n/a", "Evening", "n/a"),
             "moderation_queue": [],
@@ -1490,6 +1656,7 @@ async def build_dashboard_snapshot(user: dict, *, force_refresh: bool = False) -
             "connected_accounts": [],
             "model_stack": get_model_stack(),
         }
+        snapshot["module_highlights"] = build_module_highlights(snapshot, report_count=report_total)
         snapshot = _json_safe(snapshot)
         await set_json(cache_key, snapshot, get_settings().dashboard_cache_ttl_seconds)
         return snapshot
@@ -1774,6 +1941,7 @@ async def build_dashboard_snapshot(user: dict, *, force_refresh: bool = False) -
         "connected_accounts": connected_accounts,
         "model_stack": analysis_summary.get("model_stack") or get_model_stack(),
     }
+    snapshot["module_highlights"] = build_module_highlights(snapshot, report_count=report_total)
     snapshot = _json_safe(snapshot)
     await set_json(cache_key, snapshot, get_settings().dashboard_cache_ttl_seconds)
     return snapshot
