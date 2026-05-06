@@ -564,7 +564,6 @@ export function PublicPlatformPage() {
   const providersQuery = useQuery({
     queryKey: ["providers", "public-platform-page"],
     retry: false,
-    placeholderData: (previousData) => previousData,
     queryFn: async () => {
       try {
         return (await apiClient.get("/providers")).data;
@@ -576,7 +575,6 @@ export function PublicPlatformPage() {
 
   const platformQuery = useQuery({
     queryKey: ["public-platform", platform, fetchMode, searchQuery],
-    placeholderData: (previousData) => previousData,
     queryFn: async () =>
       (
         await apiClient.get(`/public/platform/${platform}`, {
@@ -588,11 +586,12 @@ export function PublicPlatformPage() {
       ).data,
   });
   const { data } = platformQuery;
+  const isCatalogLoading = platformQuery.isLoading || platformQuery.isFetching;
+  const isSideLoading = platformQuery.isLoading || platformQuery.isFetching;
 
   const analyticsQuery = useQuery({
     queryKey: ["platform-item-analytics", platform, selectedItem?.id, selectedItem?.analytics_source],
     enabled: Boolean(selectedItem),
-    placeholderData: (previousData) => previousData,
     queryFn: async () =>
       (
         await apiClient.post(`/public/platform/${platform}/analytics`, {
@@ -616,7 +615,7 @@ export function PublicPlatformPage() {
   const isLive = data?.data_source === "live";
   const isConnected = isLive || data?.data_source === "connected";
   const isTypingSearch = mode === "search" && query !== debouncedQuery;
-  const isPageLoading = (platformQuery.isLoading && !platformQuery.data) || (isTypingSearch && !platformQuery.data);
+  const isPageLoading = platformQuery.isLoading || (isTypingSearch && !platformQuery.data);
   const viewData = data;
   const accountLabel =
     backendUser?.display_name
@@ -797,7 +796,16 @@ export function PublicPlatformPage() {
             ))}
           </div>
 
-          {!isPageLoading && (viewData?.trending_cards || []).length > 0 && (
+          {isCatalogLoading ? (
+            <section className="grid gap-4 sm:grid-cols-3">
+              {Array.from({ length: 3 }).map((_, index) => (
+                <GlowCard key={`trending-skeleton-${index}`} glowColor={colors.glow} className="p-5">
+                  <div className="h-3 w-20 animate-pulse rounded-full bg-white/10" />
+                  <div className="mt-3 h-8 w-28 animate-pulse rounded-full bg-white/10" />
+                </GlowCard>
+              ))}
+            </section>
+          ) : (viewData?.trending_cards || []).length > 0 ? (
             <section className="grid gap-4 sm:grid-cols-3">
               {viewData.trending_cards.map((card) => (
                 <GlowCard key={card.name} glowColor={colors.glow} className="p-5">
@@ -806,7 +814,7 @@ export function PublicPlatformPage() {
                 </GlowCard>
               ))}
             </section>
-          )}
+          ) : null}
 
           <section className="grid gap-8 xl:grid-cols-[1.2fr_0.8fr]">
             <div className="space-y-5">
@@ -836,7 +844,7 @@ export function PublicPlatformPage() {
                 </p>
               )}
 
-              {isPageLoading ? (
+              {isCatalogLoading ? (
                 <CatalogLoader />
               ) : (
                 <motion.div variants={stagger} initial="hidden" animate="show" className="space-y-4">
@@ -848,7 +856,7 @@ export function PublicPlatformPage() {
                 </motion.div>
               )}
 
-              {!isPageLoading && filteredCatalog.length === 0 && (
+              {!isCatalogLoading && filteredCatalog.length === 0 && (
                 <Panel className="p-8 text-center">
                   <p className="text-slate-400">
                     {viewData?.data_source === "limitation" ? "This access mode does not expose more public content right now." : "No content to display yet."}
@@ -871,7 +879,7 @@ export function PublicPlatformPage() {
                 </Panel>
               )}
 
-              {!isPageLoading && filteredCatalog.length > ITEMS_PER_PAGE && (
+              {!isCatalogLoading && filteredCatalog.length > ITEMS_PER_PAGE && (
                 <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/[0.06] bg-white/[0.03] px-4 py-3 text-xs text-slate-400">
                   <span>
                     Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1}-{Math.min(currentPage * ITEMS_PER_PAGE, filteredCatalog.length)} of {filteredCatalog.length}
@@ -895,7 +903,12 @@ export function PublicPlatformPage() {
                 </div>
               )}
 
-              {!isPageLoading && (viewData?.preview_charts || []).length > 0 && (
+              {isCatalogLoading ? (
+                <Panel className="p-5">
+                  <div className="h-4 w-32 animate-pulse rounded-full bg-white/10" />
+                  <div className="mt-4 h-56 animate-pulse rounded-2xl bg-white/[0.05]" />
+                </Panel>
+              ) : (viewData?.preview_charts || []).length > 0 ? (
                 <Panel className="p-5">
                   <h3 className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
                     {isConnected ? "Your activity" : "Engagement trend"}
@@ -917,11 +930,11 @@ export function PublicPlatformPage() {
                     </ResponsiveContainer>
                   </div>
                 </Panel>
-              )}
+              ) : null}
             </div>
 
             <div className="space-y-6">
-              {isPageLoading ? (
+              {isSideLoading ? (
                 <SideRailLoader />
               ) : (
                 <>
@@ -1009,7 +1022,7 @@ export function PublicPlatformPage() {
                     </Panel>
                   )}
 
-                  {!hasConnectedProvider && (
+                  {!hasConnectedProvider && !providersQuery.isLoading && (
                     <Panel className="p-6">
                       <div className="text-center">
                         <div className={`mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br ${colors.accent}`}>

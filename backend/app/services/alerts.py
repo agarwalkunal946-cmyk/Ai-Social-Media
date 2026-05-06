@@ -151,9 +151,10 @@ async def sync_workspace_alerts(user_id: str) -> None:
         await db.alerts.delete_many({"_id": {"$in": stale_ids}})
 
     for alert in auto_alerts:
+        update_fields = {k: v for k, v in alert.items() if k != "timestamp"}
         await db.alerts.update_one(
             {"_id": alert["_id"]},
-            {"$set": alert, "$setOnInsert": {"timestamp": datetime.now(timezone.utc)}},
+            {"$set": update_fields, "$setOnInsert": {"timestamp": datetime.now(timezone.utc)}},
             upsert=True,
         )
 

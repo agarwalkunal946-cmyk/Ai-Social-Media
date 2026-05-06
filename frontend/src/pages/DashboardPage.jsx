@@ -25,8 +25,10 @@ import { Panel } from "../components/ui/Panel";
 import { StatCard } from "../components/ui/StatCard";
 import { TopContentMediaCard } from "../components/ui/TopContentMediaCard";
 import { useAuth } from "../hooks/useAuth";
+import { useToast } from "../hooks/useToast";
 import { apiClient } from "../lib/apiClient";
 import { resolveAssetUrl } from "../lib/assetUrl";
+import { getUserFacingError } from "../lib/errorMessage";
 
 const sentimentColors = ["#00e5ff", "#94a3b8", "#f43f5e"];
 const apiRoot = (import.meta.env.VITE_API_BASE_URL || "http://localhost:8000/api").replace(/\/api$/, "");
@@ -113,45 +115,59 @@ function InsightMetric({ label, value, detail }) {
 
 export function DashboardPage() {
   const { backendUser } = useAuth();
+  const { showToast } = useToast();
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [chatInput, setChatInput] = useState("");
   const [chatHistory, setChatHistory] = useState([]);
 
   const dashboardQuery = useQuery({
     queryKey: ["dashboard"],
-    placeholderData: (previousData) => previousData,
     queryFn: async () => (await apiClient.get("/dashboard")).data,
   });
   const alertsQuery = useQuery({
     queryKey: ["alerts"],
-    placeholderData: (previousData) => previousData,
     queryFn: async () => (await apiClient.get("/alerts")).data,
   });
   const providersQuery = useQuery({
     queryKey: ["providers"],
-    placeholderData: (previousData) => previousData,
     queryFn: async () => (await apiClient.get("/providers")).data,
   });
   const reportsQuery = useQuery({
     queryKey: ["reports"],
-    placeholderData: (previousData) => previousData,
     queryFn: async () => (await apiClient.get("/reports")).data,
   });
   const data = dashboardQuery.data;
 
   const chatbotMutation = useMutation({
     mutationFn: async (message) => (await apiClient.post("/dashboard/chatbot", { message })).data,
-    onSuccess: (response, message) => {
+    onMutate: (message) => {
+      setChatHistory((current) => [...current, { role: "user", text: message }]);
+    },
+    onSuccess: (response) => {
       setChatHistory((current) => [
         ...current,
-        { role: "user", text: message },
         {
           role: "assistant",
-          text: response.answer,
+          text: response.answer || "I could not build an analytics answer right now.",
           bullets: response.bullets || [],
           followUp: response.follow_up || [],
           statCards: response.stat_cards || [],
           mediaItems: response.media_items || [],
+        },
+      ]);
+    },
+    onError: (error) => {
+      const message = getUserFacingError(error, "I could not load analytics right now.");
+      showToast(error, "error");
+      setChatHistory((current) => [
+        ...current,
+        {
+          role: "assistant",
+          text: message,
+          bullets: [
+            "Try asking about dashboard values, connected accounts, or a public platform search like Search MrBeast on YouTube.",
+          ],
+          followUp: data?.chatbot?.starter_questions?.slice(0, 3) || [],
         },
       ]);
     },

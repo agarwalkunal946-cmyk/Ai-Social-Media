@@ -3,6 +3,7 @@ import re
 from datetime import datetime, timedelta, timezone
 from statistics import mean
 
+from app.core.config import get_settings
 from app.db.mongo import get_database
 from app.db.redis_client import delete_key, get_json, set_json
 from app.services.analysis import analyze_text_batch, classify_text, get_model_stack
@@ -19,6 +20,130 @@ TIME_WINDOWS = (
     ("Late night", (21, 22, 23, 0, 1, 2, 3, 4)),
 )
 DASHBOARD_CACHE_PREFIX = "dashboard-snapshot:v1"
+CHATBOT_DOMAIN_KEYWORDS = (
+    "app",
+    "application",
+    "synapse",
+    "dashboard",
+    "analytics",
+    "social",
+    "instagram",
+    "youtube",
+    "twitter",
+    "followers",
+    "reach",
+    "engagement",
+    "views",
+    "likes",
+    "comments",
+    "replies",
+    "hashtags",
+    "caption",
+    "trend",
+    "trending",
+    "viral",
+    "audience",
+    "sentiment",
+    "emotion",
+    "toxic",
+    "risk",
+    "alert",
+    "moderation",
+    "connected",
+    "account",
+    "profile",
+    "creator",
+    "post",
+    "reel",
+    "video",
+    "media",
+    "public",
+    "search",
+)
+CHATBOT_SEARCH_KEYWORDS = ("search", "find", "lookup", "analyze", "analyse", "analytics", "profile", "public search")
+CHATBOT_NAME_LOOKUP_KEYWORDS = (
+    "full name",
+    "channel name",
+    "creator name",
+    "profile name",
+    "account name",
+    "real name",
+    "who is",
+)
+CHATBOT_CODE_TERMS = (
+    "code",
+    "coding",
+    "python",
+    "javascript",
+    "typescript",
+    "react",
+    "html",
+    "css",
+    "sql",
+    "api",
+    "backend",
+    "frontend",
+    "bug",
+    "debug",
+    "function",
+    "class",
+)
+CHATBOT_SCOPE_REPLY = (
+    "This assistant only answers AI social media analytics questions using your dashboard metrics "
+    "and live public platform data from YouTube, Instagram, and X / Twitter."
+)
+CHATBOT_APP_FEATURES = [
+    "Unified dashboard for Instagram, YouTube, and X / Twitter analytics",
+    "Connected account summaries, public platform search, and live trend exploration",
+    "Sentiment, emotion, toxicity, moderation queue, and crisis alerts",
+    "Audience insights, predictive posting windows, and explainable AI summaries",
+    "Top content cards, trending hashtags, and AI recommendations",
+]
+CHATBOT_ANALYTICS_METHODS = {
+    "content_score": "views + likes*15 + comments*20 + replies*20 + reposts*18 + retweets*18 + quotes*16 + saves*18 + shares*18",
+    "interaction_total": "likes + comments + replies + reposts + retweets + quotes + saves + shares",
+    "engagement_rate": "interactions / reach * 100",
+    "predictive_change": "((recent_average - baseline_average) / baseline_average) * 100",
+}
+CHATBOT_FILLER_WORDS = {
+    "what",
+    "which",
+    "show",
+    "tell",
+    "give",
+    "me",
+    "about",
+    "for",
+    "find",
+    "search",
+    "lookup",
+    "analytics",
+    "analysis",
+    "channel",
+    "creator",
+    "profile",
+    "account",
+    "full",
+    "real",
+    "name",
+    "please",
+    "the",
+    "this",
+    "that",
+    "on",
+    "of",
+    "is",
+    "ka",
+    "ke",
+    "ki",
+    "kya",
+    "kaun",
+    "kaunsa",
+    "kaunsi",
+    "batao",
+    "bolo",
+    "hai",
+}
 
 
 def _dashboard_cache_key(user_id: str) -> str:
@@ -180,6 +305,104 @@ def _extract_platforms_from_prompt(prompt: str) -> list[str]:
     if "twitter" in lowered or "tweet" in lowered or re.search(r"\bx\b", lowered):
         platforms.append("x")
     return list(dict.fromkeys(platforms))
+
+
+def _contains_any_phrase(text: str, phrases: tuple[str, ...] | list[str]) -> bool:
+    return any(phrase in text for phrase in phrases)
+
+
+def _is_code_request(prompt: str) -> bool:
+    return _contains_any_phrase((prompt or "").lower(), CHATBOT_CODE_TERMS)
+
+
+def _is_domain_prompt(prompt: str) -> bool:
+    return _contains_any_phrase((prompt or "").lower(), CHATBOT_DOMAIN_KEYWORDS)
+
+
+def _clean_public_query(query: str) -> str:
+    cleaned = re.sub(r"\s+", " ", query or "").strip(" .,:;!?")
+    cleaned = re.sub(r"^(for|about|of|on)\s+", "", cleaned, flags=re.IGNORECASE)
+    return cleaned.strip()
+
+
+def _infer_platform_from_context(prompt: str, requested_platforms: list[str]) -> str | None:
+    lowered = (prompt or "").lower()
+    if requested_platforms:
+        return requested_platforms[0]
+    if "youtube" in lowered or "channel" in lowered or "shorts" in lowered:
+        return "youtube"
+    if "instagram" in lowered or "insta" in lowered or "reel" in lowered:
+        return "instagram"
+    if "twitter" in lowered or "tweet" in lowered or "handle" in lowered or re.search(r"\bx\b", lowered):
+        return "x"
+    return None
+
+
+def _extract_entity_lookup_request(prompt: str, requested_platforms: list[str]) -> tuple[str, str] | None:
+    lowered = (prompt or "").lower()
+    if not _contains_any_phrase(lowered, CHATBOT_NAME_LOOKUP_KEYWORDS):
+        return None
+
+    platform = _infer_platform_from_context(prompt, requested_platforms)
+    if not platform:
+        return None
+
+    candidates = re.findall(r"[a-z0-9_@']+", lowered)
+    query_tokens = [
+        token
+        for token in candidates
+        if token not in CHATBOT_FILLER_WORDS
+        and token not in {"youtube", "instagram", "twitter", "x", "social", "media", "app", "apps"}
+        and not token.isdigit()
+    ]
+    query = _clean_public_query(" ".join(query_tokens[:6]))
+    if not query:
+        return None
+    return platform, query
+
+
+def _extract_public_search_request(prompt: str, requested_platforms: list[str]) -> tuple[str, str] | None:
+    original = (prompt or "").strip()
+    lowered = original.lower()
+    if not original:
+        return None
+
+    handle_match = re.search(
+        r"(@[a-z0-9_]{1,15}|(?:https?://)?(?:www\.)?(?:x|twitter)\.com/[a-z0-9_]{1,15})",
+        original,
+        re.IGNORECASE,
+    )
+    if handle_match and ("x" in requested_platforms or not requested_platforms or "twitter" in lowered):
+        return "x", _clean_public_query(handle_match.group(1))
+
+    patterns = (
+        r"(?:search|find|lookup|analy[sz]e|show(?: me)?|give me)\s+(?P<query>.+?)\s+on\s+(?P<platform>youtube|instagram|x|twitter)\b",
+        r"(?P<platform>youtube|instagram|x|twitter)\s+(?:search|analytics|analysis|profile|public search)\s+(?:for\s+)?(?P<query>.+)",
+        r"(?P<platform>youtube|instagram|x|twitter)\s+(?:for|about)\s+(?P<query>.+)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, original, re.IGNORECASE)
+        if not match:
+            continue
+        platform = "x" if match.group("platform").lower() in {"x", "twitter"} else match.group("platform").lower()
+        query = _clean_public_query(match.group("query"))
+        if query:
+            return platform, query
+
+    if len(requested_platforms) == 1 and _contains_any_phrase(lowered, CHATBOT_SEARCH_KEYWORDS):
+        cleaned = re.sub(
+            r"\b(search|find|lookup|analy[sz]e|analytics|analysis|show|public|profile|stats|for|about|on|please)\b",
+            " ",
+            original,
+            flags=re.IGNORECASE,
+        )
+        cleaned = re.sub(r"\b(youtube|instagram|twitter)\b", " ", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\bx\b", " ", cleaned, flags=re.IGNORECASE)
+        query = _clean_public_query(cleaned)
+        if query:
+            return requested_platforms[0], query
+
+    return None
 
 
 def _sorted_latest_items(catalog: list[dict]) -> list[dict]:
@@ -522,12 +745,30 @@ def _build_explainability(
 
 def _build_chatbot_payload(best_day: str, best_time_window: str, top_platform: str) -> dict:
     return {
-        "greeting": "Your assistant can answer dashboard analytics questions, summarize connected accounts, surface live public trends, and preview the latest playable media from YouTube, Instagram, and X / Twitter.",
+        "title": "AI social media analytics assistant",
+        "greeting": (
+            "Ask only about dashboard values, connected account performance, public platform searches, "
+            "trends, hashtags, media, audience signals, and risk alerts for YouTube, Instagram, and X / Twitter."
+        ),
+        "input_placeholder": 'Ask about dashboard values or public analytics, for example: "Search MrBeast on YouTube"',
+        "scope": [
+            "Dashboard values",
+            "Connected account analytics",
+            "Public platform search",
+            "Trends and hashtags",
+            "App features, formulas, and models",
+            "No coding or off-topic replies",
+        ],
         "starter_questions": [
             "What is my best posting time?",
             f"Which platform currently leads my audience, {top_platform} or another source?",
             "Show the latest video or reel from my connected sources.",
             "What is trending publicly right now on YouTube and X / Twitter?",
+            "Search MrBeast on YouTube and summarize the analytics.",
+            "MrBeast ke channel ka full name kya hai?",
+            "Which models are used in this app?",
+            "How are trending hashtags calculated?",
+            "Show analytics for @AlwaysRamCharan on X / Twitter.",
             "Do I have any crisis risks right now?",
             "Which hashtags should I reuse next?",
         ],
@@ -599,11 +840,252 @@ async def _load_top_conversation_items(user: dict, platforms: list[str], limit: 
     return [_catalog_item_to_chat_media(item, platform) for _, item, platform in scored[:limit]]
 
 
+def _build_public_payload_stat_cards(payload: dict, platform: str) -> list[dict]:
+    cards = []
+    for item in payload.get("trending_cards") or []:
+        name = str(item.get("name") or "Metric").strip()
+        cards.append(_card(f"{_platform_label(platform)} {name}", str(item.get("value") or "0")))
+        if len(cards) >= 4:
+            return cards
+
+    for item in payload.get("hero_metrics") or []:
+        label = str(item.get("label") or "Metric").strip()
+        cards.append(_card(f"{_platform_label(platform)} {label}", str(item.get("value") or "n/a")))
+        if len(cards) >= 4:
+            break
+    return cards
+
+
+def _build_public_search_follow_up(platform: str, payload: dict) -> list[str]:
+    label = _platform_label(platform)
+    suggestions = []
+    for suggestion in payload.get("suggested_searches") or []:
+        cleaned = str(suggestion or "").strip()
+        if not cleaned:
+            continue
+        suggestions.append(f"Search {cleaned} on {label}")
+        if len(suggestions) >= 2:
+            break
+    suggestions.append(f"What public trends are live on {label}?")
+    return suggestions[:3]
+
+
+def _build_feature_summary_response(snapshot: dict) -> dict:
+    overview = snapshot.get("overview") or []
+    return {
+        "answer": "This app is an AI social media analytics workspace for Instagram, YouTube, and X / Twitter.",
+        "bullets": CHATBOT_APP_FEATURES[:5],
+        "stat_cards": [
+            _card(item.get("label", "Metric"), item.get("value", "0"), item.get("delta"))
+            for item in overview[:3]
+        ],
+        "follow_up": [
+            "Which models are used in this app?",
+            "How are trending hashtags calculated?",
+            "What is my best posting time?",
+        ],
+    }
+
+
+def _build_model_stack_response(snapshot: dict) -> dict:
+    model_stack = snapshot.get("model_stack") or get_model_stack()
+    return {
+        "answer": "These are the analytics models and fallback layers configured in the current build.",
+        "bullets": [
+            f"Sentiment model: {model_stack.get('sentiment')}",
+            f"Toxicity model: {model_stack.get('toxicity')}",
+            f"Emotion model: {model_stack.get('emotion')}",
+            f"Runtime mode: {model_stack.get('mode', 'unknown')}",
+        ],
+        "stat_cards": [
+            _card("Sentiment", str(model_stack.get("sentiment") or "n/a")),
+            _card("Toxicity", str(model_stack.get("toxicity") or "n/a")),
+            _card("Forecasting", str(model_stack.get("forecasting") or "n/a")),
+            _card("Embeddings", str(model_stack.get("embeddings") or "n/a")),
+        ],
+        "follow_up": [
+            "How are dashboard analytics calculated?",
+            "How is toxicity detected?",
+            "How are trending hashtags calculated?",
+        ],
+    }
+
+
+def _build_accuracy_response(snapshot: dict) -> dict:
+    return {
+        "answer": "Visible provider metrics can be exact for the fetched source data, but AI insights are estimates and cannot be guaranteed 100% exact.",
+        "bullets": [
+            "Counts like followers, views, likes, comments, and loaded posts come from connected providers or live public sources.",
+            "Sentiment, emotion, toxicity, recommendations, and prediction are derived analytics layers.",
+            "The assistant is grounded to app data and should avoid guessing when data is unavailable.",
+        ],
+        "follow_up": [
+            "Which models are used in this app?",
+            "How are dashboard analytics calculated?",
+            "Show my current dashboard summary.",
+        ],
+    }
+
+
+def _build_methodology_response(prompt: str) -> dict:
+    lowered = (prompt or "").lower()
+
+    if "hashtag" in lowered:
+        return {
+            "answer": "Trending hashtags are built by counting recurring tags across indexed content items.",
+            "bullets": [
+                "The system reads tags from content items and caption-derived tags.",
+                "Recurring tags are counted across platforms.",
+                "The top recurring tags become the dashboard trending hashtags.",
+            ],
+            "stat_cards": [
+                _card("Method", "Recurring tag count"),
+                _card("Source", "Indexed content tags"),
+            ],
+            "follow_up": ["Which hashtags should I reuse next?", "How is top content scored?"],
+        }
+
+    if "sentiment" in lowered or "emotion" in lowered:
+        return {
+            "answer": "Sentiment and emotion are derived from the text collected from titles, descriptions, captions, and tags.",
+            "bullets": [
+                "Positive and negative keywords determine the dominant sentiment label.",
+                "Emotion labels are mapped from keyword groups like joy, excitement, concern, frustration, anger, and surprise.",
+                "Overall mood combines dominant sentiment and dominant emotion.",
+            ],
+            "stat_cards": [
+                _card("Sentiment method", "Keyword-weighted fallback"),
+                _card("Emotion method", "Mapped keyword groups"),
+            ],
+            "follow_up": ["How is toxicity detected?", "Show my current mood summary."],
+        }
+
+    if "toxic" in lowered or "toxicity" in lowered or "moderation" in lowered:
+        return {
+            "answer": "Toxicity is estimated from harmful-language keyword signals inside indexed content text.",
+            "bullets": [
+                "Harmful-language tokens increase the toxicity score.",
+                "Items above the moderation threshold enter the moderation queue.",
+                "High toxicity can also trigger crisis alerts.",
+            ],
+            "stat_cards": [
+                _card("Toxicity method", "Keyword toxicity fallback"),
+                _card("Queue trigger", "Toxic or negative content"),
+            ],
+            "follow_up": ["Do I have any crisis risks right now?", "Which content item is most at risk?"],
+        }
+
+    if "forecast" in lowered or "predict" in lowered or "posting time" in lowered or "best time" in lowered:
+        return {
+            "answer": "Prediction compares recent engagement momentum with the earlier trend baseline.",
+            "bullets": [
+                f'Predicted change formula: {CHATBOT_ANALYTICS_METHODS["predictive_change"]}',
+                "A strong positive change becomes Upward, a strong negative change becomes Cooling, otherwise Stable.",
+                "Best posting window is selected from the strongest score bucket by day and UTC time window.",
+            ],
+            "stat_cards": [
+                _card("Forecast formula", CHATBOT_ANALYTICS_METHODS["predictive_change"]),
+                _card("Engagement rate", CHATBOT_ANALYTICS_METHODS["engagement_rate"]),
+            ],
+            "follow_up": ["What is my best posting time?", "How is top content scored?"],
+        }
+
+    return {
+        "answer": "Dashboard analytics are calculated from connected-platform metrics plus app-side AI analysis layers.",
+        "bullets": [
+            f'Content score: {CHATBOT_ANALYTICS_METHODS["content_score"]}',
+            f'Interaction total: {CHATBOT_ANALYTICS_METHODS["interaction_total"]}',
+            f'Engagement rate: {CHATBOT_ANALYTICS_METHODS["engagement_rate"]}',
+        ],
+        "stat_cards": [
+            _card("Content score", CHATBOT_ANALYTICS_METHODS["content_score"]),
+            _card("Interactions", CHATBOT_ANALYTICS_METHODS["interaction_total"]),
+        ],
+        "follow_up": [
+            "How are trending hashtags calculated?",
+            "Which models are used in this app?",
+            "What is my best posting time?",
+        ],
+    }
+
+
+async def _build_public_search_chat_response(user: dict, platform: str, query: str) -> dict:
+    payload = await get_public_platform_payload(platform, user, mode="search", query=query)
+    catalog = payload.get("catalog") or []
+    stat_cards = _build_public_payload_stat_cards(payload, platform)
+    bullets = []
+
+    if catalog:
+        lead = catalog[0]
+        bullets.append(
+            f'Top result: "{lead.get("title") or "Content"}" by {lead.get("creator") or _platform_label(platform)} '
+            f'with {_metric_summary(lead, platform)}.'
+        )
+        bullets.append(f'Loaded {len(catalog)} public result(s) for "{query}".')
+    if payload.get("summary"):
+        bullets.append(str(payload.get("summary")))
+    for insight in payload.get("side_insights") or []:
+        body = str(insight.get("body") or "").strip()
+        if body and body not in bullets:
+            bullets.append(body)
+        if len(bullets) >= 4:
+            break
+
+    if catalog:
+        media_items = [_catalog_item_to_chat_media(item, platform) for item in catalog[:3]]
+        return {
+            "answer": f'Here is the live public {_platform_label(platform)} analytics summary for "{query}".',
+            "bullets": bullets[:4],
+            "stat_cards": stat_cards,
+            "media_items": media_items,
+            "follow_up": _build_public_search_follow_up(platform, payload),
+        }
+
+    return {
+        "answer": payload.get("headline") or f"{_platform_label(platform)} public search is not ready right now.",
+        "bullets": bullets[:4] or [CHATBOT_SCOPE_REPLY],
+        "stat_cards": stat_cards,
+        "follow_up": _build_public_search_follow_up(platform, payload),
+    }
+
+
+async def _build_entity_lookup_response(user: dict, platform: str, query: str) -> dict:
+    payload = await get_public_platform_payload(platform, user, mode="search", query=query)
+    catalog = payload.get("catalog") or []
+    stat_cards = _build_public_payload_stat_cards(payload, platform)
+
+    if not catalog:
+        return {
+            "answer": f'I could not confirm a public {_platform_label(platform)} identity for "{query}" right now.',
+            "bullets": [payload.get("summary") or CHATBOT_SCOPE_REPLY],
+            "stat_cards": stat_cards,
+            "follow_up": _build_public_search_follow_up(platform, payload),
+        }
+
+    lead = catalog[0]
+    creator = lead.get("creator") or lead.get("title") or query
+    title = lead.get("title") or "Top result"
+    return {
+        "answer": f'The top public {_platform_label(platform)} match for "{query}" is "{creator}".',
+        "bullets": [bullet for bullet in [
+            f'Top content title: "{title}"',
+            f'Visible analytics summary: {_metric_summary(lead, platform)}',
+            str(payload.get("summary") or "").strip(),
+        ] if bullet],
+        "stat_cards": stat_cards,
+        "media_items": [_catalog_item_to_chat_media(lead, platform)],
+        "follow_up": [
+            f"Search {query} on {_platform_label(platform)} and summarize the analytics.",
+            f"What public trends are live on {_platform_label(platform)}?",
+        ],
+    }
+
+
 async def build_dashboard_chatbot_response(snapshot: dict, user: dict, message: str) -> dict:
     prompt = (message or "").strip()
     if not prompt:
         return {
-            "answer": "Ask about posting windows, audience insights, crisis risk, hashtags, or top content performance.",
+            "answer": "Ask about dashboard values, connected accounts, public search analytics, trends, hashtags, or risk alerts.",
             "bullets": [],
             "follow_up": snapshot.get("chatbot", {}).get("starter_questions", [])[:3],
         }
@@ -621,8 +1103,114 @@ async def build_dashboard_chatbot_response(snapshot: dict, user: dict, message: 
     active_platforms = requested_platforms or [item.get("platform") for item in connected_accounts if item.get("platform")]
     active_platforms = [platform for platform in active_platforms if platform in {"instagram", "youtube", "x"}]
     active_platforms = list(dict.fromkeys(active_platforms)) or ["youtube", "instagram", "x"]
+    entity_lookup_request = _extract_entity_lookup_request(prompt, active_platforms)
+    public_search_request = _extract_public_search_request(prompt, active_platforms)
+    feature_request = _contains_any_phrase(
+        lowered,
+        ("what does this app do", "what can this app do", "app features", "features", "synapse", "platform features", "how this app works", "how does this app work"),
+    )
+    model_request = _contains_any_phrase(lowered, ("which model", "what model", "model used", "models used", "model stack", "kaunsa model"))
+    methodology_request = _contains_any_phrase(
+        lowered,
+        ("how calculate", "formula", "calculation", "calculated", "nikalte", "kaise nikalte", "kaise calculate"),
+    )
+    accuracy_request = _contains_any_phrase(lowered, ("100% exact", "fully exact", "accuracy", "accurate", "reliable", "exact"))
 
-    if "time" in lowered or "post" in lowered or "schedule" in lowered:
+    if re.fullmatch(r"(hi|hello|hey|help)\W*", lowered):
+        return {
+            "answer": CHATBOT_SCOPE_REPLY,
+            "bullets": [
+                "Use it for dashboard values, connected account performance, public creator searches, and trend summaries.",
+                "It will not answer coding or unrelated questions.",
+            ],
+            "follow_up": snapshot.get("chatbot", {}).get("starter_questions", [])[:4],
+        }
+
+    if feature_request:
+        return _build_feature_summary_response(snapshot)
+
+    if model_request:
+        return _build_model_stack_response(snapshot)
+
+    if methodology_request:
+        return _build_methodology_response(prompt)
+
+    if accuracy_request:
+        return _build_accuracy_response(snapshot)
+
+    if entity_lookup_request:
+        return await _build_entity_lookup_response(user, entity_lookup_request[0], entity_lookup_request[1])
+
+    if _is_code_request(prompt):
+        return {
+            "answer": "Coding help is disabled in this assistant.",
+            "bullets": [
+                CHATBOT_SCOPE_REPLY,
+                "Ask about engagement, audience reach, connected accounts, hashtags, public searches, or content performance instead.",
+            ],
+            "follow_up": snapshot.get("chatbot", {}).get("starter_questions", [])[:3],
+        }
+
+    if not _is_domain_prompt(prompt) and len(prompt.split()) >= 5:
+        return {
+            "answer": CHATBOT_SCOPE_REPLY,
+            "bullets": [
+                "It is restricted to AI social media analytics only.",
+                "Use platform names, dashboard metrics, or public search queries in your question.",
+            ],
+            "follow_up": snapshot.get("chatbot", {}).get("starter_questions", [])[:3],
+        }
+
+    if public_search_request:
+        return await _build_public_search_chat_response(user, public_search_request[0], public_search_request[1])
+
+    timing_request = _contains_any_phrase(
+        lowered,
+        (
+            "best posting time",
+            "best time",
+            "posting window",
+            "post timing",
+            "when should i post",
+            "when to post",
+            "schedule next post",
+            "publish window",
+        ),
+    )
+    hashtag_request = "hashtag" in lowered or bool(re.search(r"(?<!\w)#\w+", prompt))
+    connected_request = _contains_any_phrase(
+        lowered,
+        (
+            "connected account",
+            "connected accounts",
+            "connected source",
+            "connected sources",
+            "account summary",
+            "my accounts",
+            "my sources",
+        ),
+    )
+    audience_request = _contains_any_phrase(lowered, ("audience", "reach", "followers", "follower"))
+    risk_request = _contains_any_phrase(lowered, ("crisis", "risk", "toxic", "toxicity", "alert", "negative spike"))
+    caption_request = _contains_any_phrase(lowered, ("caption", "hook", "sound like", "copy direction"))
+    content_format_request = _contains_any_phrase(lowered, ("content format", "strongest format", "best format", "format is strongest"))
+    trend_request = _contains_any_phrase(lowered, ("trending", "trend", "viral", "public trend", "public trends"))
+    comment_activity_request = _contains_any_phrase(
+        lowered,
+        ("comment activity", "reply activity", "most comments", "most replies", "comment-heavy", "reply-heavy", "conversation"),
+    )
+    risk_item_request = _contains_any_phrase(lowered, ("most at risk", "highest risk", "most toxic item", "risky content"))
+    top_content_request = _contains_any_phrase(
+        lowered,
+        ("top content", "best content", "strongest content", "top post", "best post", "performing best", "top performer"),
+    )
+    latest_media_request = _contains_any_phrase(
+        lowered,
+        ("latest media", "recent media", "latest video", "latest reel", "latest photo", "latest content", "show latest"),
+    )
+    moderation_queue_request = _contains_any_phrase(lowered, ("moderation queue", "review queue", "flagged item", "flagged items"))
+
+    if timing_request:
         timing = next((item for item in recommendations if item.get("category") == "timing"), None)
         best_window = timing.get("body") if timing else "The best posting window is not available yet."
         return {
@@ -639,7 +1227,7 @@ async def build_dashboard_chatbot_response(snapshot: dict, user: dict, message: 
             "follow_up": ["Which content format is strongest?", "Which hashtags should I use next?"],
         }
 
-    if "hashtag" in lowered or "tag" in lowered:
+    if hashtag_request:
         return {
             "answer": "These are the strongest recurring tags in the current indexed content set.",
             "bullets": [f'{item["tag"]} used {item["count"]} time(s)' for item in hashtags[:5]],
@@ -650,7 +1238,7 @@ async def build_dashboard_chatbot_response(snapshot: dict, user: dict, message: 
             "follow_up": ["What should the next caption sound like?", "Which platform is leading my audience?"],
         }
 
-    if "connected" in lowered or "source" in lowered or "account" in lowered or "followers" in lowered:
+    if connected_request:
         if connected_accounts:
             return {
                 "answer": "These are the connected social accounts currently feeding your workspace.",
@@ -670,7 +1258,7 @@ async def build_dashboard_chatbot_response(snapshot: dict, user: dict, message: 
             "follow_up": ["What is trending publicly right now?", "Which hashtags should I watch?"],
         }
 
-    if "audience" in lowered or "reach" in lowered:
+    if audience_request:
         return {
             "answer": "Here is the current audience summary across connected platforms.",
             "bullets": [f'{card["label"]}: {card["value"]}' for card in audience_cards[:4]],
@@ -678,7 +1266,36 @@ async def build_dashboard_chatbot_response(snapshot: dict, user: dict, message: 
             "follow_up": ["What is my best posting time?", "Do I have any crisis risks right now?"],
         }
 
-    if "crisis" in lowered or "risk" in lowered or "toxic" in lowered or "alert" in lowered:
+    if caption_request:
+        caption = next((item for item in recommendations if item.get("category") == "caption"), None)
+        return {
+            "answer": caption.get("body") if caption else "Caption direction will appear after enough content is indexed.",
+            "bullets": [
+                f'Trend outlook: {forecast.get("trend_direction", "Stable")}',
+                f'Viral opportunity: {forecast.get("viral_opportunity", "Medium")}',
+            ],
+            "follow_up": ["Which hashtags should I reuse next?", "Which content format is strongest?"],
+        }
+
+    if content_format_request:
+        format_card = next((card for card in audience_cards if card.get("label") == "Top content format"), None)
+        window_card = next((card for card in audience_cards if card.get("label") == "Best publishing window"), None)
+        return {
+            "answer": (
+                f'{format_card.get("value")} is the strongest visible format in the current indexed content set.'
+                if format_card
+                else "Content format guidance will appear after more content is indexed."
+            ),
+            "bullets": [detail for detail in [format_card.get("detail") if format_card else "", window_card.get("detail") if window_card else ""] if detail],
+            "stat_cards": [
+                _card(card["label"], card["value"], card.get("detail"))
+                for card in audience_cards
+                if card.get("label") in {"Top content format", "Best publishing window"}
+            ],
+            "follow_up": ["What should the next caption sound like?", "What is my best posting time?"],
+        }
+
+    if risk_request:
         if crisis_alerts:
             return {
                 "answer": "The dashboard found moderation or sentiment signals that may need attention.",
@@ -695,7 +1312,25 @@ async def build_dashboard_chatbot_response(snapshot: dict, user: dict, message: 
             "follow_up": ["Which platform leads my audience?", "Which hashtags should I reuse next?"],
         }
 
-    if "trend" in lowered or "trending" in lowered or "public" in lowered or "viral" in lowered:
+    if risk_item_request:
+        top_flag = moderation_queue[0] if moderation_queue else None
+        if top_flag:
+            return {
+                "answer": f'"{top_flag["title"]}" is the most at-risk indexed item right now.',
+                "bullets": [
+                    f'Platform: {top_flag["platform"]}',
+                    f'Toxicity: {top_flag["toxicity"]}%',
+                    f'Sentiment: {top_flag["sentiment"]} / Emotion: {top_flag["emotion"]}',
+                ],
+                "follow_up": ["Do I have any crisis risks right now?", "What is my best posting time?"],
+            }
+        return {
+            "answer": "No indexed item is currently standing out as a high-risk moderation case.",
+            "bullets": ["The review queue is currently below the stronger risk threshold."],
+            "follow_up": ["Do I have any crisis risks right now?", "Which platform leads my audience?"],
+        }
+
+    if trend_request:
         media_items, stat_cards = await _load_public_trending_media(user, active_platforms, limit=4)
         if media_items:
             platforms_label = ", ".join(_platform_label(platform) for platform in active_platforms[:3])
@@ -715,7 +1350,7 @@ async def build_dashboard_chatbot_response(snapshot: dict, user: dict, message: 
             "follow_up": ["Show my connected account analytics.", "What is my best posting time?"],
         }
 
-    if "comment" in lowered or "reply" in lowered:
+    if comment_activity_request:
         conversation_items = await _load_top_conversation_items(user, active_platforms, limit=4)
         if conversation_items:
             return {
@@ -730,7 +1365,7 @@ async def build_dashboard_chatbot_response(snapshot: dict, user: dict, message: 
             "follow_up": ["Show the latest media from my connected accounts.", "Do I have any crisis risks right now?"],
         }
 
-    if "top" in lowered or "best" in lowered or "content" in lowered:
+    if top_content_request:
         top_item = top_content[0] if top_content else None
         if not top_item:
             return {
@@ -749,7 +1384,7 @@ async def build_dashboard_chatbot_response(snapshot: dict, user: dict, message: 
             "follow_up": ["What posting window should I use?", "Which hashtags match this content?"],
         }
 
-    if "latest" in lowered or "video" in lowered or "reel" in lowered or "photo" in lowered or "media" in lowered:
+    if latest_media_request:
         media_items = await _load_connected_preview_media(user, active_platforms, limit=4)
         if media_items:
             return {
@@ -777,18 +1412,22 @@ async def build_dashboard_chatbot_response(snapshot: dict, user: dict, message: 
             "follow_up": snapshot.get("chatbot", {}).get("starter_questions", [])[:3],
         }
 
-    if "moderation" in lowered or "comment" in lowered:
+    if moderation_queue_request:
         return {
             "answer": "These are the current moderation-priority items from the indexed sample.",
             "bullets": [
                 f'{item["platform"]}: {item["title"]} ({item["toxicity"]}% toxicity)'
                 for item in moderation_queue[:4]
             ] or ["No moderation item is currently above the review threshold."],
+            "stat_cards": [
+                _card("Flagged items", str(len(moderation_queue))),
+                _card("Highest toxicity", f'{moderation_queue[0]["toxicity"]}%' if moderation_queue else "0%"),
+            ],
             "follow_up": ["Do I have any crisis risks right now?", "Which platform leads my audience?"],
         }
 
     return {
-        "answer": "Here is the current dashboard summary in plain English.",
+        "answer": "Here is the current AI social media dashboard summary in plain English.",
         "bullets": [
             f'Connected accounts: {next((item.get("value") for item in snapshot.get("overview", []) if item.get("label") == "Connected Accounts"), "0")}',
             f'Overall mood: {next((item.get("value") for item in snapshot.get("overview", []) if item.get("label") == "Overall Mood"), "n/a")}',

@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Link2, Loader2 } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { CheckCircle2, Link2, Loader2, Trash2 } from "lucide-react";
 import { useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 
@@ -10,7 +10,6 @@ import { Button } from "../components/ui/Button";
 import { GlowCard } from "../components/ui/GlowCard";
 import { useToast } from "../hooks/useToast";
 import { apiClient } from "../lib/apiClient";
-import { resolveAssetUrl } from "../lib/assetUrl";
 
 const stagger = { hidden: { opacity: 0 }, show: { opacity: 1, transition: { staggerChildren: 0.1 } } };
 const fadeUp = { hidden: { opacity: 0, y: 16 }, show: { opacity: 1, y: 0, transition: { duration: 0.4 } } };
@@ -41,10 +40,10 @@ export function ConnectPage() {
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
   const [loadingPlatform, setLoadingPlatform] = useState("");
+  const [disconnectingPlatform, setDisconnectingPlatform] = useState("");
   const [xHandle, setXHandle] = useState("");
   const providersQuery = useQuery({
     queryKey: ["providers"],
-    placeholderData: (previousData) => previousData,
     queryFn: async () => (await apiClient.get("/providers")).data,
   });
   const { data } = providersQuery;
@@ -70,23 +69,6 @@ export function ConnectPage() {
     }
   };
 
-  const disconnectMutation = useMutation({
-    mutationFn: async ({ platform }) => (await apiClient.delete(`/providers/${platform}`)).data,
-    onSuccess: async (response, { platform, handle }) => {
-      await queryClient.invalidateQueries({ queryKey: ["providers"] });
-      await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
-      await queryClient.invalidateQueries({ queryKey: ["alerts"] });
-      await queryClient.invalidateQueries({ queryKey: ["reports"] });
-      showToast(response?.message || `${platformConfig[platform]?.label || platform} disconnected.`, "success");
-      if (platform === "x") {
-        setXHandle(handle ? `@${handle}` : "");
-      }
-    },
-    onError: (error) => {
-      showToast(error, "error");
-    },
-  });
-
   const connectXHandle = async () => {
     const handle = xHandle.trim();
     if (!handle) {
@@ -105,19 +87,26 @@ export function ConnectPage() {
       if (error?.code === "ECONNABORTED") {
         showToast("X handle request took too long. The backend X session may be stale. Restart the backend and try again.", "error");
       } else {
-      showToast(error, "error");
+        showToast(error, "error");
       }
     } finally {
       setLoadingPlatform("");
     }
   };
 
-  const disconnectPlatform = async (platform, handle = "") => {
-    setLoadingPlatform(`disconnect-${platform}`);
+  const disconnectPlatform = async (platform) => {
+    setDisconnectingPlatform(platform);
     try {
-      await disconnectMutation.mutateAsync({ platform, handle });
+      const response = await apiClient.delete(`/providers/${platform}`);
+      await queryClient.invalidateQueries({ queryKey: ["providers"] });
+      await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+      await queryClient.invalidateQueries({ queryKey: ["alerts"] });
+      await queryClient.invalidateQueries({ queryKey: ["public-platform"] });
+      showToast(response.data?.message || "Disconnected successfully.", "success");
+    } catch (error) {
+      showToast(error, "error");
     } finally {
-      setLoadingPlatform("");
+      setDisconnectingPlatform("");
     }
   };
 
@@ -171,7 +160,6 @@ export function ConnectPage() {
             const isConnected = connection?.connected;
             const isLoading = loadingPlatform === platform.key;
             const isXHandleLoading = loadingPlatform === "x-handle";
-            const isDisconnecting = loadingPlatform === `disconnect-${platform.key}`;
             const statusLabel = "Connected";
 
             return (
@@ -220,13 +208,6 @@ export function ConnectPage() {
                       <div className="mt-auto pt-4">
                         <div className="rounded-xl bg-white/[0.03] p-3.5">
                           <div className="flex items-center gap-3">
-                            {/* <div className={`flex h-10 w-10 items-center justify-center overflow-hidden rounded-xl bg-gradient-to-br ${config.accent}`}>
-                              {connection.avatar_url ? (
-                                <img src={resolveAssetUrl(connection.avatar_url)} alt={connection.account_name || connection.handle || platform.name} className="h-full w-full object-cover" />
-                              ) : (
-                                <Icon size={18} className="text-white" />
-                              )}
-                            </div> */}
                             <div className="min-w-0">
                               <p className="text-xs text-slate-500">Connected as</p>
                               <p className="mt-1 truncate font-display text-base font-bold text-white">{connection.account_name || connection.handle || "Connected"}</p>
@@ -234,13 +215,14 @@ export function ConnectPage() {
                           </div>
                         </div>
                         <Button
-                          className="mt-3 w-full gap-2 text-xs"
-                          variant="danger"
-                          onClick={() => disconnectPlatform(platform.key, connection?.handle || "")}
-                          disabled={isDisconnecting}
+                          className="mt-3 w-full gap-2"
+                          variant="secondary"
+                          onClick={() => disconnectPlatform(platform.key)}
+                          disabled={disconnectingPlatform === platform.key}
+                          style={{ borderColor: "rgba(239,68,68,0.3)", color: "#f87171" }}
                         >
-                          {isDisconnecting ? <Loader2 size={16} className="animate-spin" /> : <Link2 size={16} />}
-                          {isDisconnecting ? "Disconnecting..." : "Disconnect"}
+                          {disconnectingPlatform === platform.key ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                          {disconnectingPlatform === platform.key ? "Removing..." : "Remove connection"}
                         </Button>
                       </div>
                     )}

@@ -116,11 +116,11 @@ export function DashboardAssistantWidget({
                 <div>
                   <div className="inline-flex items-center gap-2 rounded-full bg-neon/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-neon">
                     <Sparkles size={12} />
-                    Assistant
+                    AI Analytics
                   </div>
-                  <h2 className="mt-3 font-display text-xl font-bold text-white">Analytics co-pilot</h2>
+                  <h2 className="mt-3 font-display text-xl font-bold text-white">{chatbotConfig?.title || "AI social media analytics assistant"}</h2>
                   <p className="mt-2 text-xs leading-relaxed text-slate-400">
-                    {chatbotConfig?.greeting || "Ask about connected accounts, public trends, latest media, sentiment, alerts, or recommendations."}
+                    {chatbotConfig?.greeting || "Ask about dashboard values, public search analytics, connected accounts, trends, formulas, models, sentiment, alerts, or recommendations."}
                   </p>
                 </div>
                 <button type="button" onClick={() => setOpen(false)} className="text-slate-500 transition hover:text-white">
@@ -134,7 +134,7 @@ export function DashboardAssistantWidget({
                 <div className="rounded-3xl border border-white/[0.06] bg-white/[0.03] p-4">
                   <div className="flex items-center gap-2 text-neon">
                     <MessageSquareText size={16} />
-                    <p className="text-sm font-medium">Ask anything about your workspace</p>
+                    <p className="text-sm font-medium">Ask about analytics, app features, formulas, or public platform search</p>
                   </div>
                   <div className="mt-4 flex flex-wrap gap-2">
                     {(chatbotConfig?.starter_questions || []).map((question) => (
@@ -159,16 +159,16 @@ export function DashboardAssistantWidget({
 
               {chatbotMutation.isPending && (
                 <div className="mt-3 rounded-3xl bg-white/[0.03] p-4 text-sm text-slate-400">
-                  Reviewing the latest connected analytics and public trend context...
+                  Reviewing dashboard metrics and live public platform analytics...
                 </div>
               )}
             </div>
 
             <div className="border-t border-white/[0.06] px-5 py-4">
               <div className="mb-3 flex flex-wrap gap-2 text-[11px] text-slate-500">
-                <span className="rounded-full bg-white/[0.03] px-2.5 py-1">Connected account context</span>
-                <span className="rounded-full bg-white/[0.03] px-2.5 py-1">Public trends</span>
-                <span className="rounded-full bg-white/[0.03] px-2.5 py-1">Playable media cards</span>
+                {(chatbotConfig?.scope || ["Dashboard values", "Connected account analytics", "Public platform search"]).map((item) => (
+                  <span key={item} className="rounded-full bg-white/[0.03] px-2.5 py-1">{item}</span>
+                ))}
               </div>
               <div className="flex gap-3">
                 <input
@@ -180,7 +180,7 @@ export function DashboardAssistantWidget({
                       askQuestion(chatInput);
                     }
                   }}
-                  placeholder="Ask about YouTube, Instagram, X / Twitter, trends, videos, comments..."
+                  placeholder={chatbotConfig?.input_placeholder || 'Ask about analytics or the app, for example: "Search MrBeast on YouTube"'}
                   className="w-full rounded-2xl border border-white/[0.08] bg-white/[0.03] px-4 py-3 text-sm text-white outline-none placeholder:text-slate-500"
                 />
                 <Button className="gap-2" onClick={() => askQuestion(chatInput)} disabled={chatbotMutation.isPending}>

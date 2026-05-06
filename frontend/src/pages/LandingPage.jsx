@@ -97,7 +97,6 @@ export function LandingPage() {
             <div className="hidden items-center gap-8 md:flex">
               <a href="#features" className="text-sm text-slate-400 transition hover:text-white">Features</a>
               <a href="#platforms" className="text-sm text-slate-400 transition hover:text-white">Platforms</a>
-              <Link to="/explore/youtube" className="text-sm text-slate-400 transition hover:text-white">Explore</Link>
             </div>
 
             <div className="flex items-center gap-3">
@@ -138,20 +137,7 @@ export function LandingPage() {
                 chatbot insights, and shareable reports in one dashboard.
               </motion.p>
 
-              <motion.div variants={fadeUp} className="mt-10 flex flex-wrap items-center justify-center gap-4">
-                <Link to="/signup">
-                  <Button className="gap-2 px-7 py-3.5 text-base">
-                    Start the workspace
-                    <ArrowRight size={16} />
-                  </Button>
-                </Link>
-                <Link to="/explore/youtube">
-                  <Button variant="secondary" className="gap-2 px-7 py-3.5 text-base">
-                    Explore live trends
-                    <ChevronRight size={16} />
-                  </Button>
-                </Link>
-              </motion.div>
+
 
               <motion.div variants={fadeUp} className="mx-auto mt-16 flex max-w-2xl flex-wrap items-center justify-center gap-8 sm:gap-12">
                 <div>
@@ -235,7 +221,7 @@ export function LandingPage() {
                 const PlatformIcon = config.icon;
                 return (
                   <motion.div key={card.platform} variants={fadeUp}>
-                    <GlowCard glowColor={config.glow} className="flex h-full flex-col p-6">
+                    <GlowCard glowColor={config.glow} className="h-full p-6">
                       <div className="flex items-center gap-3">
                         <div className={`flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br ${config.color}`}>
                           <PlatformIcon size={22} className="text-white" />
@@ -244,21 +230,13 @@ export function LandingPage() {
                           <h3 className="font-display text-xl font-bold text-white">{card.title}</h3>
                         </div>
                       </div>
-                      <p className="mt-4 text-sm text-slate-400">{card.subtitle}</p>
+                      <p className="mt-4 text-sm leading-relaxed text-slate-400">{card.subtitle}</p>
                       <div className="mt-5 flex flex-wrap gap-2">
                         {card.stats.map((item) => (
                           <span key={item} className="rounded-lg bg-white/5 px-2.5 py-1.5 text-[11px] text-slate-400">
                             {item}
                           </span>
                         ))}
-                      </div>
-                      <div className="mt-auto flex items-center justify-between pt-6">
-                        <Link to={`/explore/${card.platform}`}>
-                          <Button variant="secondary" className="gap-2 text-xs">
-                            {card.cta}
-                            <ChevronRight size={14} />
-                          </Button>
-                        </Link>
                       </div>
                     </GlowCard>
                   </motion.div>
