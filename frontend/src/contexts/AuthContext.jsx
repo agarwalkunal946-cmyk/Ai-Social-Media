@@ -11,15 +11,27 @@ import {
 } from "firebase/auth";
 
 import { apiClient } from "../lib/apiClient";
-import { auth, facebookProvider, githubProvider, googleProvider } from "../lib/firebase";
+import { auth, githubProvider, googleProvider } from "../lib/firebase";
 
 export const AuthContext = createContext(null);
 
 const SOCIAL_PROVIDER_LABELS = {
-  "facebook.com": "Facebook",
   "github.com": "GitHub",
   "google.com": "Google",
 };
+
+function getPasswordResetProviderMessage(providerId) {
+  const providerLabel = SOCIAL_PROVIDER_LABELS[providerId];
+  if (providerLabel) {
+    return `This account uses ${providerLabel}. Sign in with ${providerLabel} instead of password reset.`;
+  }
+
+  if (providerId && providerId !== "password") {
+    return "This account uses a social sign-in method that is no longer available here. Use a different account or contact support.";
+  }
+
+  return null;
+}
 
 function normalizeEmail(email) {
   const value = (email || "").trim();
@@ -71,11 +83,6 @@ export function AuthProvider({ children }) {
     return syncBackendUser();
   };
 
-  const loginWithFacebook = async () => {
-    await signInWithPopup(auth, facebookProvider);
-    return syncBackendUser();
-  };
-
   const loginWithEmail = async (email, password) => {
     await signInWithEmailAndPassword(auth, normalizeEmail(email), password);
     return syncBackendUser();
@@ -112,9 +119,9 @@ export function AuthProvider({ children }) {
       throw new Error("No account found with this email.");
     }
 
-    const socialProviderLabel = SOCIAL_PROVIDER_LABELS[accountSnapshot?.provider];
-    if (socialProviderLabel) {
-      throw new Error(`This account uses ${socialProviderLabel}. Sign in with ${socialProviderLabel} instead of password reset.`);
+    const providerMessage = getPasswordResetProviderMessage(accountSnapshot?.provider);
+    if (providerMessage) {
+      throw new Error(providerMessage);
     }
 
     try {
@@ -124,12 +131,12 @@ export function AuthProvider({ children }) {
     }
 
     if (Array.isArray(signInMethods) && signInMethods.length > 0 && !signInMethods.includes("password")) {
-      const providerLabel =
+      const providerMessage =
         signInMethods
-          .map((method) => SOCIAL_PROVIDER_LABELS[method])
-          .find(Boolean) || "social login";
+          .map((method) => getPasswordResetProviderMessage(method))
+          .find(Boolean) || "This account uses social login. Sign in with that provider instead of password reset.";
 
-      throw new Error(`This account uses ${providerLabel}. Sign in with ${providerLabel} instead of password reset.`);
+      throw new Error(providerMessage);
     }
 
     await sendPasswordResetEmail(auth, normalizedEmail);
@@ -169,7 +176,6 @@ export function AuthProvider({ children }) {
       loading,
       loginWithGoogle,
       loginWithGithub,
-      loginWithFacebook,
       loginWithEmail,
       registerWithEmail,
       requestPasswordReset,

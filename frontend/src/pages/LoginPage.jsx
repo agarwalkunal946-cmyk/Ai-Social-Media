@@ -9,10 +9,10 @@ import { Button } from "../components/ui/Button";
 import { AnimatedBackground } from "../components/ui/AnimatedBackground";
 import { isSilentAuthDismissError } from "../lib/errorMessage";
 
-const SOCIAL_LOADING_LABELS = new Set(["google", "github", "facebook"]);
+const SOCIAL_LOADING_LABELS = new Set(["google", "github"]);
 
 export function LoginPage() {
-  const { firebaseUser, backendUser, loginWithGoogle, loginWithGithub, loginWithFacebook, loginWithEmail, requestPasswordReset } = useAuth();
+  const { firebaseUser, backendUser, loginWithGoogle, loginWithGithub, loginWithEmail, requestPasswordReset } = useAuth();
   const navigate = useNavigate();
   const { showToast } = useToast();
   const { theme, toggleTheme } = useTheme();
@@ -117,20 +117,6 @@ export function LoginPage() {
                 className="text-xs"
               >
                 <Github size={16} /> GitHub
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => wrap("facebook", loginWithFacebook, { releaseBeforeToast: true, silentDismiss: true })}
-                disabled={loading === "facebook"}
-                className="col-span-2 text-xs"
-              >
-                <svg className="h-4 w-4" viewBox="0 0 24 24" aria-hidden="true">
-                  <path
-                    fill="#1877F2"
-                    d="M24 12.07C24 5.4 18.63 0 12 0S0 5.4 0 12.07c0 6.03 4.39 11.03 10.13 11.93v-8.44H7.08v-3.49h3.05V9.41c0-3.03 1.79-4.7 4.53-4.7 1.31 0 2.69.24 2.69.24v2.98h-1.52c-1.5 0-1.97.94-1.97 1.9v2.24h3.35l-.54 3.49h-2.81V24C19.61 23.1 24 18.1 24 12.07z"
-                  />
-                </svg>
-                Facebook
               </Button>
             </div>
 
